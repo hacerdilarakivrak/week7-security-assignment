@@ -7,6 +7,7 @@ I analyzed the deliberately vulnerable Bookstore application using Semgrep and p
 ### Initial Semgrep Scan
 
 **Command:**
+
 ```bash
 semgrep scan --config auto
 ```
@@ -22,16 +23,17 @@ The initial findings included:
 |---|---|---|
 | SAST | SQL Injection (two rule matches) | `main.py` |
 | SAST | Wildcard CORS configuration | `main.py` |
-| Secrets | Hardcoded API key and secret token (identified from source) | `main.py` |
+| Secrets | Hardcoded API key and secret token (identified from source inspection) | `main.py` |
 | SCA | Outdated requests dependency | `requirements.txt` |
 
-The SQL injection vulnerability was reported by two Semgrep rules, so the three initial findings represented two distinct underlying issues. The hardcoded credentials were identified through source-code inspection, while dependency vulnerabilities were identified using pip-audit.
+The SQL injection vulnerability was reported by two Semgrep rules, so the three initial findings represented two distinct underlying issues. The hardcoded credentials were identified through source-code inspection rather than the initial Semgrep findings, while dependency vulnerabilities were identified using pip-audit.
 
 ### Additional Security Scans
 
-**Secrets scanning**
+**Secrets Scanning**
 
 Command:
+
 ```bash
 semgrep scan --config p/secrets
 ```
@@ -41,11 +43,12 @@ Result after remediation:
 - 11 files scanned
 - 0 findings
 
-The absence of findings indicates that the executed rules did not detect any remaining secrets. It does not guarantee that the application contains no secrets.
+The executed rules did not detect any remaining secrets. However, this does not guarantee that the application contains no secrets.
 
-**Dependency scanning**
+**Dependency Scanning**
 
 Command:
+
 ```bash
 python -m pip_audit -r requirements.txt
 ```
@@ -64,7 +67,7 @@ No known vulnerabilities found
 
 ### Fix 1 — SQL Injection
 
-**File:** `main.py`, approximately lines 98–102
+**File:** `main.py`, lines 99–104
 
 **Category:** SAST
 
@@ -83,20 +86,21 @@ rows = conn.execute(query).fetchall()
 
 ```python
 query = "SELECT id, title, author FROM books WHERE title LIKE ?"
-rows = conn.execute(query, (f"%{q}%",)).fetchall()
+with closing(get_db()) as conn:
+    rows = conn.execute(query, (f"%{q}%",)).fetchall()
 ```
 
 **Explanation:**
 
 The original implementation directly inserted user input into an SQL query, creating an SQL injection vulnerability.
 
-I replaced the unsafe string formatting with a parameterized query. This separates user-controlled values from SQL instructions and prevents user input from changing the structure of the query.
+I replaced the unsafe string formatting with a parameterized SQL query. This separates user-controlled values from SQL instructions and prevents user input from changing the structure of the query.
 
 **Verification:** The SQL injection findings disappeared from the subsequent Semgrep scan.
 
 ### Fix 2 — Insecure CORS Configuration
 
-**File:** `main.py`, approximately line 41
+**File:** `main.py`, line 42
 
 **Category:** SAST
 
@@ -151,30 +155,65 @@ I upgraded the dependency and reinstalled the required packages to address the v
 **Verification:**
 
 Before:
+
 ```text
 Found 24 known vulnerabilities in 3 packages
 ```
 
 After:
+
 ```text
 No known vulnerabilities found
 ```
 
 ### Additional Security Improvement — Hardcoded Credentials
 
-**File:** `main.py`
+**File:** `main.py`, lines 34–35
 
-**Category:** Secrets / Source-code security
+**Category:** Secrets / Source-code Security
 
-The starter application also contained hardcoded credential values, including an API key and secret token.
+**Issue:**
 
-These values were identified through source-code inspection rather than the three initial Semgrep findings.
+The starter application contained hardcoded credential values, including an API key and a secret token. These credentials were identified through source-code inspection rather than the three initial Semgrep findings.
 
-The remediation involved removing sensitive values from the source code and using environment variables for configuration.
+**Before (insecure approach):**
 
-This helps prevent credentials from being exposed directly through the application source.
+```python
+API_KEY = "hardcoded-api-key"
+SECRET_TOKEN = "hardcoded-secret-token"
+```
 
-**Verification:** A subsequent Semgrep secrets scan reported 0 findings across 11 scanned files. This result applies to the executed rules and is not a comprehensive guarantee that no secrets exist.
+*Note: These are illustrative placeholder values, not the original credentials.*
+
+**After (environment variables):**
+
+```python
+API_KEY = os.getenv("BOOKSTORE_API_KEY")
+SECRET_TOKEN = os.getenv("BOOKSTORE_SECRET_TOKEN")
+```
+
+**Explanation:**
+
+The original implementation stored sensitive credentials directly in the application source code, creating a risk of credential exposure through version control.
+
+I replaced the hardcoded credentials with environment variable lookups using Python's `os.getenv()` function.
+
+This separates credential configuration from application source code and reduces the risk of accidentally exposing secrets in the repository.
+
+**Verification:**
+
+Command:
+
+```bash
+semgrep scan --config p/secrets
+```
+
+Result:
+- 37 rules executed
+- 11 files scanned
+- 0 findings
+
+The executed secret-scanning rules did not detect any remaining secrets. This result does not guarantee that every possible secret exposure has been eliminated.
 
 ### AI-Assisted Remediation
 
@@ -245,7 +284,7 @@ The attacker-controlled review content successfully redirected the model's behav
 
 ### Mitigation
 
-**File:** `main.py`
+**File:** `main.py`, lines 140–155
 
 **Function:** `summarize_review`
 
